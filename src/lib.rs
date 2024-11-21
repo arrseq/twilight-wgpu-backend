@@ -3,11 +3,12 @@
 #![feature(fn_traits)]
 
 use std::default::Default;
+use std::iter;
 use std::slice::Iter;
 use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
 use web_sys::HtmlCanvasElement;
-use wgpu::{Backends, DeviceDescriptor, Instance, InstanceDescriptor, SurfaceConfiguration, TextureFormat, TextureUsages};
+use wgpu::{Backends, CommandEncoderDescriptor, DeviceDescriptor, Instance, InstanceDescriptor, LoadOp, Operations, RenderPassColorAttachment, RenderPassDescriptor, StoreOp, SurfaceConfiguration, TextureFormat, TextureUsages, TextureViewDescriptor};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy};
@@ -113,10 +114,41 @@ impl<'a, AdapterSelector, FormatSelector> ApplicationHandler<Command> for Backen
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
-        let Some(state) = &self.state else { return };
+        let Some(state) = &mut self.state else { return };
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
+            },
+            WindowEvent::Resized(size) => {
+                state.config.width = size.width;
+                state.config.height = size.height;
+                state.surface.configure(&state.device, &state.config);
+            },
+            WindowEvent::RedrawRequested => {
+                let output = state.surface.get_current_texture().unwrap();
+                let view = output.texture.create_view(&TextureViewDescriptor::default());
+                
+                let mut encoder = state.device.create_command_encoder(&CommandEncoderDescriptor {
+                    label: Some("Render Pass")
+                });
+                
+                encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Clear(wgpu::Color::default()),
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+                
+                state.queue.submit(iter::once(encoder.finish()));
+                output.present();
             },
             _ => {}
         }
