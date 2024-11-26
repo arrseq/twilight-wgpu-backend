@@ -2,214 +2,111 @@
 #![feature(type_alias_impl_trait)]
 #![feature(fn_traits)]
 
-use std::default::Default;
 use std::iter;
-use std::slice::Iter;
-use std::sync::Arc;
-#[cfg(target_arch = "wasm32")]
-use web_sys::HtmlCanvasElement;
-use wgpu::{Backends, CommandEncoderDescriptor, DeviceDescriptor, Instance, InstanceDescriptor, LoadOp, Operations, RenderPassColorAttachment, RenderPassDescriptor, StoreOp, SurfaceConfiguration, TextureFormat, TextureUsages, TextureViewDescriptor};
-use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy};
-#[cfg(target_os = "windows")]
-use winit::platform::windows::EventLoopBuilderExtWindows;
-use winit::platform::windows::WindowExtWindows;
-use winit::window::WindowId;
+use std::num::NonZeroU32;
+use wgpu::{include_wgsl, CommandEncoderDescriptor, Device, LoadOp, Operations, PipelineLayoutDescriptor, Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, StoreOp, Surface, SurfaceConfiguration, TextureViewDescriptor};
 
-struct State<'a> {
-    window: Arc<winit::window::Window>,
-    surface: wgpu::Surface<'a>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+pub struct Backend<'a> {
+    surface: Surface<'a>,
+    device: Device,
+    queue: Queue,
     config: SurfaceConfiguration,
-    size: winit::dpi::PhysicalSize<u32>,
+    pipeline: RenderPipeline
 }
 
-pub struct Backend<'a, AdapterSelector, FormatSelector> {
-    state: Option<State<'a>>,
-    event_loop: Option<EventLoop<Command>>,
-    backends: Backends,
-    adapter_selector: AdapterSelector,
-    format_selector: FormatSelector,
-    // #[cfg(target_arch = "wasm32")]
-    // canvas_element: String
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-enum Command {
-    #[default]
-    Stop
-}
-
-#[derive(Debug, Clone)]
-pub struct ProxyRemote(EventLoopProxy<Command>);
-
-impl ProxyRemote {
-    pub fn stop(self) {
-        self.0.send_event(Command::Stop).unwrap()
-    }
-}
-
-pub mod adapter_selector {
-    use std::slice::Iter;
-    use wgpu::{Adapter, TextureFormat};
-
-    pub type Adapters<'a> = impl Iterator<Item = &'a Adapter> + 'a;
-    pub fn define_adapters<'a>(iter: Iter<'a, Adapter>, surface: &'a wgpu::Surface<'a>) -> Adapters<'a> {
-        iter.filter(|adapter| adapter.is_surface_supported(surface))
-    }
-
-    pub type Formats<'a> = impl Iterator<Item = &'a TextureFormat> + 'a;
-    pub fn define_formats<'a>(iter: Iter<'a, TextureFormat>) -> Formats<'a> {
-        iter.filter(|format| format.is_srgb())
-    }
-}
-
-impl<'a, AdapterSelector, FormatSelector> ApplicationHandler<Command> for Backend<'a, AdapterSelector, FormatSelector> where
-    AdapterSelector: FnMut(adapter_selector::Adapters) -> usize,
-    FormatSelector: FnMut(adapter_selector::Formats) -> usize {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window = Arc::new(event_loop.create_window(Default::default()).unwrap());
-        let size = window.inner_size();
-        
-        let instance = Instance::new(InstanceDescriptor {
-            backends: self.backends,
-            ..Default::default()
+impl<'a> Backend<'a> {
+    pub fn new(surface: Surface<'a>, device: Device, queue: Queue, config: SurfaceConfiguration) -> Self {
+        let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
+        let layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("Pipeline Layout"),
+            bind_group_layouts: &[],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("Pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"), // 1.
+                buffers: &[], // 2.
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState { // 3.
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState { // 4.
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList, // 1.
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw, // 2.
+                cull_mode: Some(wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLIP_CONTROL
+                unclipped_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            depth_stencil: None, // 1.
+            multisample: wgpu::MultisampleState {
+                count: 1, // 2.
+                mask: !0, // 3.
+                alpha_to_coverage_enabled: false, // 4.
+            },
+            multiview: None, // 5.
+            cache: None, // 6.
         });
         
-        let surface = instance.create_surface(window.clone()).unwrap();
-        
-        let adapter = {
-            let mut enumerated = instance.enumerate_adapters(self.backends);
-            let index = self.adapter_selector.call_mut((adapter_selector::define_adapters(enumerated.iter(), &surface),));
-            enumerated.swap_remove(index) // TODO: Handle invalid indexes
-        };
-        let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor::default(), None)).unwrap();
-        
-        let surface_capabilities = surface.get_capabilities(&adapter);
-        let surface_format = {
-            let index = self.format_selector.call_mut((adapter_selector::define_formats(surface_capabilities.formats.iter()),));
-            surface_capabilities.formats.get(index).copied().unwrap()
-        };
-        let config = SurfaceConfiguration {
-            usage: TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width: size.width,
-            height: size.height,
-            present_mode: surface_capabilities.present_modes[0],
-            alpha_mode: surface_capabilities.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-        
-        self.state = Some(State {
-            size: window.inner_size(),
+        Self {
             surface,
             device,
             queue,
             config,
-            window
+            pipeline
+        }
+    }
+    
+    pub fn resize(&mut self, width: NonZeroU32, height: NonZeroU32) {
+        self.config.width = width.get();
+        self.config.height = height.get();
+        self.surface.configure(&self.device, &self.config);
+    }
+    
+    pub fn render(&mut self) {
+        let output = self.surface.get_current_texture().unwrap();
+        let view = output.texture.create_view(&TextureViewDescriptor::default());
+
+        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("Render Pass")
         });
-    }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
-        let Some(state) = &mut self.state else { return };
-        match event {
-            WindowEvent::CloseRequested => {
-                event_loop.exit();
-            },
-            WindowEvent::Resized(size) => {
-                state.config.width = size.width;
-                state.config.height = size.height;
-                state.surface.configure(&state.device, &state.config);
-            },
-            WindowEvent::RedrawRequested => {
-                let output = state.surface.get_current_texture().unwrap();
-                let view = output.texture.create_view(&TextureViewDescriptor::default());
-                
-                let mut encoder = state.device.create_command_encoder(&CommandEncoderDescriptor {
-                    label: Some("Render Pass")
-                });
-                
-                encoder.begin_render_pass(&RenderPassDescriptor {
-                    label: Some("Render Pass"),
-                    color_attachments: &[Some(RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        ops: Operations {
-                            load: LoadOp::Clear(wgpu::Color::default()),
-                            store: StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                });
-                
-                state.queue.submit(iter::once(encoder.finish()));
-                output.present();
-            },
-            _ => {}
-        }
-    }
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("Render Pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(wgpu::Color::default()),
+                    store: StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Command) {
-        let Some(state) = &self.state else { return };
-        match event {
-            Command::Stop => {
-                event_loop.exit()
-            }
-        }
-    }
-}
+        pass.set_pipeline(&self.pipeline);
+        pass.draw(0..3, 0..1);
 
-impl<AdapterSelector, FormatSelector> Backend<'_, AdapterSelector, FormatSelector> where
-    AdapterSelector: FnMut(adapter_selector::Adapters) -> usize,
-    FormatSelector: FnMut(adapter_selector::Formats) -> usize {
-    #[cfg(target_arch = "wasm32")]
-    pub fn new(rendering_surface: HtmlCanvasElement) -> Self {
-        Self {
-            state: None,
-            event_loop: None,
-            // rendering_surface
-        }
-    }
-    
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn new(backends: Backends, adapter_selector: AdapterSelector, format_selector: FormatSelector) -> Self {
-        Self {
-            state: None,
-            event_loop: None,
-            adapter_selector,
-            format_selector,
-            backends
-        }
-    }
+        drop(pass);
 
-    fn load_event_loop(&mut self) {
-        if let Some(_) = self.event_loop { return }
-        let event_loop = EventLoopBuilder::default().with_any_thread(true).build().unwrap();
-        event_loop.set_control_flow(ControlFlow::Wait);
-        self.event_loop = Some(event_loop);
-    }
-
-    pub fn prepare_event_loop(&mut self) -> Result<ProxyRemote, ()> {
-        self.load_event_loop();
-        Ok(ProxyRemote(self.event_loop.as_ref().ok_or(())?.create_proxy()))
-    }
-
-    #[cfg(target_os = "windows")]
-    pub fn run(&mut self) {
-        let Some(event_loop) = self.event_loop.take() else { return };
-        event_loop.run_app(self).unwrap()
-    }
-    
-    /// # Result
-    /// Returns [None] if the state has not been initialized yet. The event loop must be running for
-    /// this to work correctly.
-    pub fn window(&mut self) -> Option<&winit::window::Window> {
-        let Some(state) = &self.state else { return None };
-        Some(&state.window)
+        self.queue.submit(iter::once(encoder.finish()));
+        output.present();
     }
 }
