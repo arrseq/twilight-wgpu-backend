@@ -1,32 +1,29 @@
 use std::default::Default;
-use std::iter;
 use std::num::NonZeroU32;
 use std::sync::Arc;
-#[cfg(target_arch = "wasm32")]
-use web_sys::HtmlCanvasElement;
-use wgpu::{include_wgsl, Backends, CommandEncoderDescriptor, DeviceDescriptor, Instance, InstanceDescriptor, LoadOp, Operations, PipelineLayoutDescriptor, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, StoreOp, SurfaceConfiguration, TextureUsages, TextureViewDescriptor};
-use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy};
-#[cfg(target_os = "windows")]
-use winit::platform::windows::EventLoopBuilderExtWindows;
-use winit::platform::windows::WindowExtWindows;
-use winit::window::WindowId;
 use twilight_wgpu_backend::Backend;
+use wgpu::{Backends, Device, DeviceDescriptor, Instance, InstanceDescriptor, Surface, SurfaceConfiguration, TextureUsages};
+use winit::application::ApplicationHandler;
+use winit::event::{ElementState, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::window::WindowId;
 
 struct State<'a> {
     window: Arc<winit::window::Window>,
-    backend: Backend<'a>
+    backend: Backend,
+    color_it: bool,
+    surface: Surface<'a>,
+    config: SurfaceConfiguration,
+    device: Device
 }
 
 struct Application<'a> {
-    state: Option<State<'a>>,
-    // #[cfg(target_arch = "wasm32")]
-    // canvas_element: String
+    state: Option<State<'a>>
 }
 
-impl<'a> ApplicationHandler<()> for Application<'a> {
+impl ApplicationHandler<()> for Application<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let None = self.state else { return };
         let window = Arc::new(event_loop.create_window(Default::default()).unwrap());
         let size = window.inner_size();
 
@@ -54,16 +51,21 @@ impl<'a> ApplicationHandler<()> for Application<'a> {
             desired_maximum_frame_latency: 2,
         };
 
-        let backend = Backend::new(surface, device, queue, config);
+        let backend = Backend::new();
 
         self.state = Some(State {
             window,
-            backend
+            backend,
+            surface,
+            config,
+            device,
+            color_it: false
         });
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
         let Some(state) = &mut self.state else { return };
+        
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
@@ -71,10 +73,16 @@ impl<'a> ApplicationHandler<()> for Application<'a> {
             WindowEvent::Resized(size) => {
                 let Some(width) = NonZeroU32::new(size.width) else { return };
                 let Some(height) = NonZeroU32::new(size.height) else { return };
-                state.backend.resize(width, height);
+                state.config.width = width.into();
+                state.config.height = height.into();
+                state.surface.configure(&state.device, &state.config)
+            },
+            WindowEvent::MouseInput { state: mouse_state, ..  } => {
+                state.color_it = mouse_state.is_pressed();
+                state.window.request_redraw();
             },
             WindowEvent::RedrawRequested => {
-                state.backend.render();
+                // state.backend.render();
             },
             _ => {}
         }
@@ -89,7 +97,8 @@ impl<'a> Default for Application<'a> {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let mut event_loop = EventLoop::new().expect("Could not create event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = Application::default();
