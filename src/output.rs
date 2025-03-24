@@ -4,12 +4,18 @@ mod object;
 use crate::output::object::ShapeObjects;
 use crate::output::uniform_shader::UniformShader;
 use std::fmt::Debug;
-use wgpu::{Device, IndexFormat, RenderPass, RenderPipeline, TextureFormat};
+use wgpu::{BindGroup, Device, IndexFormat, RenderPass, RenderPipeline, TextureFormat};
+use wgpu::util::RenderEncoder;
+
+#[derive(Debug)]
+struct RenderObject {
+    pipeline: RenderPipeline,
+    bind_group: Option<BindGroup>
+}
 
 pub trait Shader: Debug {
     fn new(device: &Device, format: TextureFormat) -> Self;
-    fn render(&mut self, pass: RenderPass);
-    fn pipeline(&self) -> &RenderPipeline;
+    fn render_object(&self) -> &RenderObject;
 }
 
 #[derive(Debug)]
@@ -19,16 +25,21 @@ pub struct Output {
 }
 
 impl Output {
-    fn new(device: Device, format: TextureFormat) -> Self {
+    pub fn new(device: &Device, format: TextureFormat) -> Self {
         Self {
             shape_objects: Vec::new(),
-            uniform_shader: Shader::new(&device, format)
+            uniform_shader: Shader::new(device, format)
         }
     }
     
-    fn render(&self, pass: &mut RenderPass) {
-        pass.set_pipeline(self.uniform_shader.pipeline());
-        
+    pub fn render(&self, pass: &mut RenderPass) {
+        let render_object = self.uniform_shader.render_object();
+        pass.set_pipeline(&render_object.pipeline);
+        match &render_object.bind_group {
+            None => pass.set_bind_group(0, None, &[]),
+            Some(bind) => pass.set_bind_group(0, Some(bind), &[])
+        }
+
         for shape in &self.shape_objects {
             pass.set_vertex_buffer(0, shape.vertexes.slice(..));
             for object in &shape.objects {
@@ -36,6 +47,5 @@ impl Output {
                 pass.draw(0..object.indexes.size() as u32, 0..1);
             }
         }
-        
     }
 }

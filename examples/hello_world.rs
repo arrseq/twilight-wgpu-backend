@@ -1,20 +1,22 @@
 use std::default::Default;
+use std::iter;
 use std::num::NonZeroU32;
 use std::sync::Arc;
-use twilight_wgpu_backend::Backend;
-use wgpu::{Backends, Device, DeviceDescriptor, Instance, InstanceDescriptor, Surface, SurfaceConfiguration, TextureUsages};
+use wgpu::{Backends, Color, CommandEncoder, CommandEncoderDescriptor, Device, DeviceDescriptor, Instance, InstanceDescriptor, LoadOp, Operations, PresentMode, Queue, RenderPassColorAttachment, RenderPassDescriptor, StoreOp, Surface, SurfaceConfiguration, SurfaceTexture, TextureUsages, TextureView, TextureViewDescriptor};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::WindowId;
+use twilight_wgpu_backend::output::Output;
 
 struct State<'a> {
     window: Arc<winit::window::Window>,
-    backend: Backend,
     color_it: bool,
     surface: Surface<'a>,
     config: SurfaceConfiguration,
-    device: Device
+    device: Device,
+    out: Output,
+    queue: Queue
 }
 
 struct Application<'a> {
@@ -45,20 +47,21 @@ impl ApplicationHandler<()> for Application<'_> {
             format: surface_format,
             width: size.width,
             height: size.height,
-            present_mode: surface_capabilities.present_modes[0],
+            present_mode: PresentMode::AutoVsync,
             alpha_mode: surface_capabilities.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
 
-        let backend = Backend::new();
+        let out = Output::new(&device, surface_format);
 
         self.state = Some(State {
             window,
-            backend,
+            out,
             surface,
             config,
             device,
+            queue,
             color_it: false
         });
     }
@@ -82,7 +85,34 @@ impl ApplicationHandler<()> for Application<'_> {
                 state.window.request_redraw();
             },
             WindowEvent::RedrawRequested => {
-                // state.backend.render();
+                let output = state.surface.get_current_texture().expect("SF");
+                let view = output.texture.create_view(&TextureViewDescriptor::default());
+
+                let mut encoder = state.device.create_command_encoder(&CommandEncoderDescriptor {
+                    label: None
+                });
+                
+                let pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[
+                        Some(RenderPassColorAttachment {
+                            view: &view,
+                            ops: Operations {
+                                load: LoadOp::Clear(Color::TRANSPARENT),
+                                store: StoreOp::Store
+                            },
+                            resolve_target: None
+                        })
+                    ],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+                
+                drop(pass);
+                
+                state.queue.submit(iter::once(encoder.finish()));
+                output.present();
             },
             _ => {}
         }
