@@ -1,7 +1,7 @@
 pub mod uniform_shader;
-mod object;
+pub mod object;
 
-use crate::output::object::ShapeObjects;
+use crate::output::object::{ObjectShader, ObjectClass};
 use crate::output::uniform_shader::UniformShader;
 use std::fmt::Debug;
 use wgpu::{BindGroup, Device, IndexFormat, RenderPass, RenderPipeline, TextureFormat};
@@ -13,36 +13,44 @@ struct RenderObject {
     bind_group: Option<BindGroup>
 }
 
-pub trait Shader: Debug {
-    fn new(device: &Device, format: TextureFormat) -> Self;
-    fn render_object(&self) -> &RenderObject;
-}
+// pub trait Shader: Debug {
+//     fn new(device: &Device, format: TextureFormat) -> Self;
+//     fn render_object(&self) -> &RenderObject;
+// }
 
 #[derive(Debug)]
 pub struct Output {
-    shape_objects: Vec<ShapeObjects>,
+    /// Will be modified constantly so a resizable vector makes sense.
+    /// todo: remove [`pub`].
+    pub object_classes: Vec<ObjectClass>,
     uniform_shader: UniformShader
 }
 
 impl Output {
     pub fn new(device: &Device, format: TextureFormat) -> Self {
         Self {
-            shape_objects: Vec::new(),
-            uniform_shader: Shader::new(device, format)
+            object_classes: Vec::new(),
+            uniform_shader: UniformShader::new(device, format)
         }
     }
     
-    pub fn render(&self, pass: &mut RenderPass) {
-        // set the rendering pipeline
-        let render_object = self.uniform_shader.render_object();
+    fn load_shader(&self, pass: &mut RenderPass, shader: ObjectShader) {
+        let render_object = &match shader {
+            ObjectShader::Uniform(color) => &self.uniform_shader,
+            _ => todo!()
+        }.render_object;
+
         pass.set_pipeline(&render_object.pipeline);
         match &render_object.bind_group {
             None => pass.set_bind_group(0, None, &[]),
             Some(bind) => pass.set_bind_group(0, Some(bind), &[])
         }
-
-        // render with pipeline
-        for shape in &self.shape_objects {
+    }
+    
+    pub fn render(&self, pass: &mut RenderPass) {
+        for shape in &self.object_classes {
+            self.load_shader(pass, shape.shader);
+            
             pass.set_vertex_buffer(0, shape.vertexes.slice(..));
             for object in &shape.objects {
                 pass.set_index_buffer(object.indexes.slice(..), IndexFormat::Uint32);

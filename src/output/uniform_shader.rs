@@ -1,11 +1,11 @@
 use std::simd::f32x2;
 use bytemuck::{Pod, Zeroable};
 use wgpu::{include_wgsl, vertex_attr_array, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferAddress, BufferBindingType, BufferDescriptor, BufferSize, BufferUsages, ColorTargetState, Device, FragmentState, PipelineLayoutDescriptor, RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderModuleDescriptor, ShaderStages, TextureFormat, VertexBufferLayout, VertexState, VertexStepMode};
-use crate::output::{RenderObject, Shader};
+use crate::output::{RenderObject};
 
 #[derive(Debug)]
 pub struct UniformShader {
-    render_object: RenderObject,
+    pub render_object: RenderObject,
     color: Buffer
 }
 
@@ -51,8 +51,8 @@ impl Vertex {
     };
 }
 
-impl Shader for UniformShader {
-    fn new(device: &Device, format: TextureFormat) -> Self {
+impl UniformShader {
+    pub(crate) fn new(device: &Device, format: TextureFormat) -> Self {
         let shader = device.create_shader_module(include_wgsl!("./uniform.wgsl"));
         
         let color = Color::create(&device);
@@ -112,9 +112,5 @@ impl Shader for UniformShader {
             },
             color            
         }
-    }
-    
-    fn render_object(&self) -> &RenderObject { 
-        &self.render_object
     }
 }

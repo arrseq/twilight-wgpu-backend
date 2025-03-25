@@ -1,12 +1,16 @@
+#![feature(portable_simd)]
+
 use std::default::Default;
 use std::iter;
 use std::num::NonZeroU32;
+use std::simd::Simd;
 use std::sync::Arc;
-use wgpu::{Backends, Color, CommandEncoder, CommandEncoderDescriptor, Device, DeviceDescriptor, Instance, InstanceDescriptor, LoadOp, Operations, PresentMode, Queue, RenderPassColorAttachment, RenderPassDescriptor, StoreOp, Surface, SurfaceConfiguration, SurfaceTexture, TextureUsages, TextureView, TextureViewDescriptor};
+use wgpu::{Backends, BufferDescriptor, BufferUsages, Color, CommandEncoder, CommandEncoderDescriptor, Device, DeviceDescriptor, Instance, InstanceDescriptor, LoadOp, Operations, PresentMode, Queue, RenderPassColorAttachment, RenderPassDescriptor, StoreOp, Surface, SurfaceConfiguration, SurfaceTexture, TextureUsages, TextureView, TextureViewDescriptor};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::WindowId;
+use twilight_wgpu_backend::output::object::{ObjectClass, ObjectShader};
 use twilight_wgpu_backend::output::Output;
 
 struct State<'a> {
@@ -53,7 +57,21 @@ impl ApplicationHandler<()> for Application<'_> {
             desired_maximum_frame_latency: 2,
         };
 
-        let out = Output::new(&device, surface_format);
+        let mut out = Output::new(&device, surface_format);
+
+        {
+            let layout = device.create_buffer(&BufferDescriptor {
+                label: None,
+                usage: BufferUsages::VERTEX,
+                
+            })
+            
+            out.object_classes.push(ObjectClass {
+                shape_id: 0,
+                shader: ObjectShader::Uniform(Simd::splat(1.0)),
+                vertexes:
+            });
+        }
 
         self.state = Some(State {
             window,
