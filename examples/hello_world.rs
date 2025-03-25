@@ -92,7 +92,7 @@ impl ApplicationHandler<()> for Application<'_> {
                     label: None
                 });
                 
-                let pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                     label: None,
                     color_attachments: &[
                         Some(RenderPassColorAttachment {
@@ -108,6 +108,8 @@ impl ApplicationHandler<()> for Application<'_> {
                     occlusion_query_set: None,
                     timestamp_writes: None,
                 });
+                
+                state.out.render(&mut pass);
                 
                 drop(pass);
                 

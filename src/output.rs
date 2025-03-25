@@ -33,6 +33,7 @@ impl Output {
     }
     
     pub fn render(&self, pass: &mut RenderPass) {
+        // set the rendering pipeline
         let render_object = self.uniform_shader.render_object();
         pass.set_pipeline(&render_object.pipeline);
         match &render_object.bind_group {
@@ -40,6 +41,7 @@ impl Output {
             Some(bind) => pass.set_bind_group(0, Some(bind), &[])
         }
 
+        // render with pipeline
         for shape in &self.shape_objects {
             pass.set_vertex_buffer(0, shape.vertexes.slice(..));
             for object in &shape.objects {
